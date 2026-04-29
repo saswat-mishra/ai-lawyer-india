@@ -1,13 +1,10 @@
 {
-  "version": 2,
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "cd frontend && pnpm install --frozen-lockfile=false && pnpm build",
   "outputDirectory": "frontend/.next",
   "framework": "nextjs",
   "installCommand": "cd frontend && pnpm install --frozen-lockfile=false",
   "rewrites": [
     { "source": "/api/:path*", "destination": "/api/index" }
-  ],
-  "functions": {
-    "api/index.py": { "runtime": "python3.11", "memory": 1024, "maxDuration": 60 }
-  }
+  ]
 }
