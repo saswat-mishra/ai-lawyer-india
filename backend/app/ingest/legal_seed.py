@@ -199,11 +199,20 @@ async def seed_legal_corpus() -> dict[str, int]:
         CONSTITUTION_DOCS = [CONSTITUTION_SEED]
     except Exception:
         CONSTITUTION_DOCS = []
+    try:
+        from app.ingest.legal_seed_cases import CASE_SEED_DOCS
+    except Exception:
+        CASE_SEED_DOCS = []
+    try:
+        from app.ingest.legal_seed_phase2 import PHASE2_SEED_DOCS
+    except Exception:
+        PHASE2_SEED_DOCS = []
 
     deduped: dict[tuple[str, str], dict] = {}
     for entry in (
         SEED_DOCS + EXTRA_SEED_DOCS + TIER1_SEED_DOCS
         + PHASE1_SEED_DOCS + CONSTITUTION_DOCS
+        + CASE_SEED_DOCS + PHASE2_SEED_DOCS
     ):
         key = (entry["doc"].get("short_citation") or "", entry["doc"].get("title") or "")
         if key in deduped:
@@ -231,5 +240,12 @@ async def seed_legal_corpus() -> dict[str, int]:
 
     for old_act, old_sec, new_act, new_sec, notes in SEED_MAPPINGS:
         await store.add_statute_mapping(old_act, old_sec, new_act, new_sec, notes)
+
+    # Seed citator graph (best-effort).
+    try:
+        from app.rag.citator import seed_citator_graph
+        counts["citator"] = await seed_citator_graph()
+    except Exception:
+        pass
 
     return counts

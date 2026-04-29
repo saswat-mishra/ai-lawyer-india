@@ -26,6 +26,7 @@ class _Mem:
     legal_documents: dict[str, dict[str, Any]] = field(default_factory=dict)
     legal_chunks: dict[str, dict[str, Any]] = field(default_factory=dict)
     statute_mapping: list[dict[str, Any]] = field(default_factory=list)
+    case_citations: list[dict[str, Any]] = field(default_factory=list)
     company_documents: dict[str, dict[str, Any]] = field(default_factory=dict)
     company_chunks: dict[str, dict[str, Any]] = field(default_factory=dict)
     artifacts: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -217,6 +218,65 @@ async def lookup_successor_section(old_act: str, old_section: str) -> dict[str, 
         if m["old_act"] == old_act and m["old_section"] == old_section:
             return m
     return None
+
+
+# ----- Citator graph (case-cites-case) -----
+
+async def add_case_citation(*, source_doc_id: str, cited_doc_id: str,
+                             treatment: str, paragraph: int | None = None) -> bool:
+    """Idempotent insert. Returns True on insert, False on duplicate."""
+    async with _lock:
+        for c in _mem.case_citations:
+            if (c["source_doc_id"] == source_doc_id
+                    and c["cited_doc_id"] == cited_doc_id
+                    and c.get("paragraph") == paragraph):
+                return False
+        _mem.case_citations.append({
+            "id": len(_mem.case_citations) + 1,
+            "source_doc_id": source_doc_id,
+            "cited_doc_id": cited_doc_id,
+            "treatment": treatment,
+            "paragraph": paragraph,
+        })
+        return True
+
+
+async def list_citations_to(*, cited_doc_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    """Cases that cite the given doc, with treatment + source metadata."""
+    out: list[dict[str, Any]] = []
+    # Treatment severity ordering — show "overruled" / "doubted" first.
+    SEVERITY = {"overruled": 0, "doubted": 1, "distinguished": 2,
+                "followed": 3, "referred": 4}
+    raw = [c for c in _mem.case_citations if c["cited_doc_id"] == cited_doc_id]
+    raw.sort(key=lambda c: SEVERITY.get(c.get("treatment", "referred"), 9))
+    for c in raw[:limit]:
+        src = _mem.legal_documents.get(c["source_doc_id"], {})
+        out.append({
+            "treatment": c["treatment"],
+            "paragraph": c.get("paragraph"),
+            "source_doc_id": c["source_doc_id"],
+            "source_short_citation": src.get("short_citation"),
+            "source_title": src.get("title"),
+            "source_status": src.get("status"),
+        })
+    return out
+
+
+async def list_citations_from(*, source_doc_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    """What does this case cite?"""
+    out: list[dict[str, Any]] = []
+    raw = [c for c in _mem.case_citations if c["source_doc_id"] == source_doc_id]
+    for c in raw[:limit]:
+        dst = _mem.legal_documents.get(c["cited_doc_id"], {})
+        out.append({
+            "treatment": c["treatment"],
+            "paragraph": c.get("paragraph"),
+            "cited_doc_id": c["cited_doc_id"],
+            "cited_short_citation": dst.get("short_citation"),
+            "cited_title": dst.get("title"),
+            "cited_status": dst.get("status"),
+        })
+    return out
 
 
 # ----- Company KB -----

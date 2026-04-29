@@ -26,3 +26,23 @@ async def successor(act: str, section: str) -> dict:
     if not m:
         return {"found": False}
     return {"found": True, **m}
+
+
+@router.get("/cited_by")
+async def cited_by(citation: str, limit: int = 50) -> dict:
+    """Return cases that cite the given case. Useful for the citator drawer:
+    'who has followed / distinguished / overruled this judgment?'."""
+    from app.rag import citator
+    rows = await citator.cited_by(citation, limit=limit)
+    return {"citation": citation, "count": len(rows), "results": rows}
+
+
+@router.get("/cites")
+async def cites(citation: str, limit: int = 50) -> dict:
+    """What does this case cite?"""
+    docs = await store.list_legal_documents()
+    target = next((d for d in docs if (d.get("short_citation") or "").strip() == citation.strip()), None)
+    if not target:
+        return {"citation": citation, "count": 0, "results": []}
+    rows = await store.list_citations_from(source_doc_id=target["id"], limit=limit)
+    return {"citation": citation, "count": len(rows), "results": rows}

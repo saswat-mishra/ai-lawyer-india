@@ -60,10 +60,19 @@ async def main() -> int:
         CONSTITUTION_DOCS = [CONSTITUTION_SEED]
     except Exception:
         CONSTITUTION_DOCS = []
+    try:
+        from app.ingest.legal_seed_cases import CASE_SEED_DOCS
+    except Exception:
+        CASE_SEED_DOCS = []
+    try:
+        from app.ingest.legal_seed_phase2 import PHASE2_SEED_DOCS
+    except Exception:
+        PHASE2_SEED_DOCS = []
 
     all_doc_entries = (
         SEED_DOCS + EXTRA_SEED_DOCS + TIER1_SEED_DOCS
         + PHASE1_SEED_DOCS + CONSTITUTION_DOCS
+        + CASE_SEED_DOCS + PHASE2_SEED_DOCS
     )
 
     out_path = corpus_file_path()

@@ -389,3 +389,95 @@ End-to-end on `https://ai-lawyer-india-ten.vercel.app`:
   citations, 4 with transparency notes (low confidence + "no specific section
   in our verified corpus matched" banner), 1 graceful clarification.
 
+---
+
+## Phase 2 progress
+
+### 2.1 — Top-50 SC landmark cases (DONE)
+
+`legal_seed_cases.py` adds 50 cases × 3 chunks (Headnote / Held / Ratio) =
+**150 chunks**. Coverage spans constitutional law (basic structure, Article
+21, federalism, religious freedom), criminal law (death penalty doctrine,
+arrest guidelines, custodial protection), commercial / arbitration (BALCO,
+Vidya Drolia, Cox & Kings), family (Shah Bano → Daniel Latifi → Shayara
+Bano lineage, Sarla Mudgal), environmental (Vellore, M.C. Mehta), and
+freedom of speech (Shreya Singhal, Anuradha Bhasin). Cases that are bad law
+are explicitly tagged `status="overruled"` (ADM Jabalpur, NN Global) so the
+`good_law_cases` view filters them out of retrieval.
+
+### 2.2 — Deeper active-acts coverage (DONE)
+
+`legal_seed_phase2.py` adds **53 chunks across 14 acts** that were either
+absent or thinly covered in Phase 0/1:
+
+- TP Act (sale, mortgage, lease, gift) · Specific Relief Act (specific
+  performance, injunction) · Limitation Act (s.3, s.5, residuary art 113)
+- Consumer Protection Act 2019 · IT Act 2000 (s.66, struck-down s.66A
+  flagged, s.66E, s.67, s.79 intermediary safe-harbour)
+- Patents Act (s.3 non-inventions, s.48, s.84 compulsory licence)
+- Trade Marks Act (s.29 infringement, s.27 passing-off) · Copyright Act
+  (s.14, s.52 fair dealing, s.63)
+- BSA 2023 (s.63 electronic records succeeding IEA s.65B)
+- Constitution Pt V/VI/XI/XIV (Art 51A duties, 72/161 pardon, 245/246
+  legislative competence, 311 civil servants, 32 'heart and soul')
+- POCSO Act (s.3, s.4) · NDPS Act (s.20, s.37 twin-test bail) · FEMA
+  · PMLA (s.3, s.4, s.5 attachment, s.45 twin conditions)
+
+**Phase 2 corpus delta: +203 chunks → corpus ~380 chunks total.**
+
+### 2.3 — Citator graph extraction (DONE)
+
+New module `app/rag/citator.py`:
+
+- `extract_citations_from_text(text)`: regex scan for SCC / AIR citations,
+  with surrounding-window keyword detection that infers `treatment`
+  (followed / distinguished / doubted / overruled / referred). Handles
+  `(1973) 4 SCC 225`, `AIR 1986 SC 180`, `2017 (10) SCC 1`.
+- `KNOWN_TREATMENTS`: 30 hand-curated case-on-case relationships — Minerva
+  Mills follows Kesavananda; Maneka Gandhi overrules A.K. Gopalan;
+  Puttaswamy overrules ADM Jabalpur; Joseph Shine overrules Yusuf Abdul
+  Aziz + Sowmithri Vishnu; Lily Thomas follows Sarla Mudgal; etc.
+- `seed_citator_graph()`: idempotent populator of the existing
+  `case_citations` table. Wired into both the pre-embedded corpus loader
+  and the live-embed fallback.
+
+API surface added:
+- `GET /api/sources/cited_by?citation=…` — cases that cite the given case,
+  ordered by treatment severity (overruled first).
+- `GET /api/sources/cites?citation=…` — what does this case cite?
+
+`app/db/store.py` gained `add_case_citation`, `list_citations_to`,
+`list_citations_from`. The unique-constraint on
+`(source_doc_id, cited_doc_id, paragraph)` makes seeding idempotent.
+
+### 2.4 — Qdrant Cloud / Voyage activation (deferred, infra verified ready)
+
+`qdrant_store.py` and `voyage_client.py` are dormant by design — they
+become active when env vars are set. Verified invariants:
+
+| Test | Result |
+|---|---|
+| `voyage_client.is_enabled()` with no env vars | False ✓ |
+| `voyage_client.is_enabled()` with key but no backend selected | False ✓ |
+| `voyage_client.is_enabled()` with both set | True ✓ |
+| `qdrant_store.is_enabled()` with no `QDRANT_URL` | False ✓ |
+| `qdrant_store.is_enabled()` with URL but client lib absent | False ✓ |
+
+**Activation steps (defer until Vercel env vars are added):**
+
+Voyage AI (50 M tokens free, voyage-law-2):
+1. Sign up at https://www.voyageai.com.
+2. Generate API key.
+3. Add `VOYAGE_API_KEY` + `EMBEDDING_BACKEND=voyage` to Vercel env.
+4. Re-run `scripts/build_corpus.py` (re-embeds at 1024 dim).
+
+Qdrant Cloud (1 GB RAM free forever):
+1. Sign up at https://cloud.qdrant.io.
+2. Create free 1 GB cluster.
+3. Add `QDRANT_URL` + `QDRANT_API_KEY` to Vercel env.
+4. `pip install qdrant-client` and run `scripts/build_corpus.py --push-qdrant`.
+
+Provisioning is deferred since it requires user-supplied email/OTP. The dormant
+clients ensure the deployed app continues to work on the in-memory + OpenAI
+path until the user opts in.
+

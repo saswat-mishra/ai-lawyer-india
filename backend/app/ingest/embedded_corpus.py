@@ -41,6 +41,7 @@ async def load_pre_embedded_corpus() -> dict[str, int]:
         return {"loaded": False}
 
     docs_seen: dict[str, str] = {}
+    citations_pending: list[dict] = []
     n_chunks = 0
     n_mappings = 0
     with _CORPUS_FILE.open() as f:
@@ -79,5 +80,34 @@ async def load_pre_embedded_corpus() -> dict[str, int]:
                     m.get("notes", ""),
                 )
                 n_mappings += 1
+            elif kind == "citation":
+                citations_pending.append(row["data"])
+    # After all docs are loaded, resolve pending citator entries by
+    # short_citation. Combines: (a) any "citation" rows shipped in the bundle,
+    # plus (b) the curated KNOWN_TREATMENTS table (covers boots without a
+    # bundle as well).
+    citator_stats = {"inserted": 0}
+    try:
+        from app.rag.citator import seed_citator_graph, normalise_citation
+        # Resolve bundled rows directly.
+        all_docs = await store.list_legal_documents()
+        by_cite = {normalise_citation(d.get("short_citation") or ""): d["id"]
+                   for d in all_docs if d.get("short_citation")}
+        bundled_inserted = 0
+        for c in citations_pending:
+            sid = by_cite.get(normalise_citation(c["source_citation"]))
+            did = by_cite.get(normalise_citation(c["cited_citation"]))
+            if sid and did:
+                ok = await store.add_case_citation(
+                    source_doc_id=sid, cited_doc_id=did,
+                    treatment=c["treatment"], paragraph=c.get("paragraph"),
+                )
+                if ok:
+                    bundled_inserted += 1
+        # Also run the seeder for any KNOWN_TREATMENTS not in the bundle.
+        seed_stats = await seed_citator_graph()
+        citator_stats = {"bundled_inserted": bundled_inserted, **seed_stats}
+    except Exception as e:
+        citator_stats = {"error": str(e)}
     return {"loaded": True, "docs": len(docs_seen), "chunks": n_chunks,
-              "mappings": n_mappings}
+              "mappings": n_mappings, "citator": citator_stats}
