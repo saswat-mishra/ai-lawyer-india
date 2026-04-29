@@ -3,15 +3,44 @@ import { useState } from "react";
 import { Citation, api } from "@/lib/api";
 import { motion, AnimatePresence } from "framer-motion";
 
+/** Format the visible label for a citation pill.
+ * Lawyers know "§"; non-lawyers don't. We use the plain words "Section" /
+ * "Article" so the pill reads naturally in either persona. The Constitution
+ * uses "Article", everything else uses "Section".
+ */
+function pillLabel(c: Citation): string {
+  if (c.type === "section") {
+    const sec = (c.section ?? "").trim();
+    const act = (c.act ?? "").trim();
+    if (act === "Constitution") return `Article ${sec}, Constitution`;
+    return act ? `Section ${sec}, ${act}` : `Section ${sec}`;
+  }
+  return c.case_name || c.citation_str || c.raw;
+}
+
 export function CitationPill({ citation }: { citation: Citation }) {
   const [open, setOpen] = useState(false);
   const [chunk, setChunk] = useState<any>(null);
   const [doc, setDoc] = useState<any>(null);
   const [loading, setLoading] = useState(false);
 
-  const label = citation.type === "section"
-    ? `${citation.act ?? ""} §${citation.section ?? ""}`.trim()
-    : citation.case_name || citation.citation_str || citation.raw;
+  const label = pillLabel(citation);
+  // Only render as a clickable pill when the source can actually be drilled
+  // into. Without a chunk_id the source-fetch endpoint returns nothing, so
+  // show inert styled text instead of an opener that leads to an empty drawer.
+  const drillable = Boolean(citation.chunk_id);
+
+  if (!drillable) {
+    return (
+      <span
+        className="cite-pill cite-pill--inert"
+        aria-label={`Reference: ${label} (source not available)`}
+        title="Source not available in our verified corpus"
+      >
+        {label}
+      </span>
+    );
+  }
 
   async function load() {
     if (chunk) return;
@@ -26,6 +55,9 @@ export function CitationPill({ citation }: { citation: Citation }) {
     }
   }
 
+  // Drillable pill — clickable, opens the source drawer. Case pills get a
+  // small ¶ marker; section/article pills already say "Section"/"Article".
+  const marker = citation.type === "case" ? "¶" : "";
   return (
     <>
       <button
@@ -34,7 +66,7 @@ export function CitationPill({ citation }: { citation: Citation }) {
         aria-label={`Source: ${label}`}
         onClick={() => { setOpen(true); load(); }}
       >
-        <span aria-hidden>§</span>
+        {marker && <span aria-hidden>{marker}</span>}
         <span>{label}</span>
       </button>
 

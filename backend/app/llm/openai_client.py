@@ -58,8 +58,18 @@ async def chat_stream(messages: list[ChatMessage], *, model: str | None = None,
         yield tok
 
 
-async def embed(texts: list[str], *, model: str | None = None) -> list[list[float]]:
+async def embed(texts: list[str], *, model: str | None = None,
+                  input_type: str = "document") -> list[list[float]]:
+    """Embed batch — routes to Voyage AI when EMBEDDING_BACKEND=voyage,
+    otherwise OpenAI, otherwise the deterministic mock."""
     settings = get_settings()
+    # Phase 2 activation: Voyage law-2 (legal-tuned).
+    try:
+        from app.llm import voyage_client
+        if voyage_client.is_enabled():
+            return await voyage_client.embed(texts, input_type=input_type)
+    except Exception:
+        pass  # fall through to OpenAI / mock
     if not settings.has_openai:
         return [_mock_embed(t, settings.openai_embedding_dim) for t in texts]
     return await _real_embed(texts, model=model or settings.openai_embedding_model,

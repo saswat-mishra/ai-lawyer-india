@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     rrf_k: int = 60
     citizen_max_results: int = 6
     practitioner_max_results: int = 20
-    refusal_floor: float = 0.30         # min retrieval support density to attempt answer
+    refusal_floor: float = 0.22         # min retrieval support density (calibrated 2026-04-29)
 
     # --- Test flags ---
     run_openai_tests: bool = False

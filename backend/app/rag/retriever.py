@@ -226,11 +226,21 @@ def _section_lookup_ids(query: str, chunks: list[dict]) -> list[str]:
 def support_density(retrieved: list[RetrievedChunk]) -> float:
     """Quality signal for the refusal floor.
 
-    Uses the MAX of (top-1 cosine similarity, top-1 lexical overlap). Either
-    method scoring high is enough to attempt an answer; we refuse only when
-    both are weak.
+    Calibrated against the live audit (2026-04-29):
+      - Real answerable queries cluster top-1 cosine 0.34–0.69
+      - Out-of-scope queries cluster 0.13–0.22
+      - Borderline-but-still-answerable queries (noise nuisance, harassment,
+        loan recovery) cluster 0.25–0.30 — so a single top-1 threshold lands
+        right in the middle of the legitimate band.
+    Fix: use the MAX of three signals so we accept if ANY says we have support:
+      - top-1 cosine  (strict semantic match)
+      - top-3 mean cosine  (cluster of moderate-relevance chunks)
+      - top-1 lexical overlap  (exact-phrase / section-number queries)
     """
     if not retrieved:
         return 0.0
-    top = retrieved[0]
-    return max(top.cosine, top.lexical)
+    top1_cos = retrieved[0].cosine
+    top1_lex = retrieved[0].lexical
+    top3 = retrieved[:3]
+    top3_mean = sum(c.cosine for c in top3) / len(top3) if top3 else 0.0
+    return max(top1_cos, top3_mean, top1_lex)

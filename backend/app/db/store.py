@@ -185,8 +185,8 @@ async def get_legal_document(document_id: str) -> dict[str, Any] | None:
 
 async def find_section_by_number(act_short: str, section: str) -> dict[str, Any] | None:
     """Find a chunk by act + section, used by citation verifier and IPC->BNS lookup."""
-    act_short = act_short.strip().upper()
-    section = section.strip()
+    act_short = str(act_short).strip().upper()
+    section = str(section).strip()
     for chunk in _mem.legal_chunks.values():
         if chunk.get("section_number") != section:
             continue

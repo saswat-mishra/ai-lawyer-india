@@ -36,3 +36,4 @@ corpus/raw/
 *.swp
 .idea/
 .vscode/
+.vercel

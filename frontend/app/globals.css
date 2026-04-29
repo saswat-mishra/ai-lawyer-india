@@ -39,6 +39,17 @@ body {
 .cite-pill:hover { background: rgba(224, 130, 60, 0.22); }
 .dark .cite-pill { color: rgb(248, 196, 152); }
 
+/* Inert variant: shown when the source isn't drillable. Looks like a pill but
+   doesn't invite a click — uses muted colour and removes the cursor. */
+.cite-pill--inert {
+  cursor: default;
+  background: rgba(120, 120, 120, 0.10);
+  color: rgb(110, 110, 120);
+  border-color: rgba(120, 120, 120, 0.28);
+}
+.cite-pill--inert:hover { background: rgba(120, 120, 120, 0.10); }
+.dark .cite-pill--inert { color: rgb(170, 170, 175); background: rgba(255, 255, 255, 0.04); border-color: rgba(255, 255, 255, 0.10); }
+
 /* Shimmer skeleton */
 .skeleton {
   background: linear-gradient(90deg, rgba(0,0,0,0.06) 0%, rgba(0,0,0,0.12) 50%, rgba(0,0,0,0.06) 100%);

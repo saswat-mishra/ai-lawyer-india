@@ -163,13 +163,56 @@ SEED_MAPPINGS: list[tuple[str, str, str, str, str]] = [
 
 
 async def seed_legal_corpus() -> dict[str, int]:
-    """Idempotent seed loader. Returns counts by doc type."""
+    """Idempotent seed loader.
+
+    Preference order:
+    1. `backend/data/corpus.jsonl` (pre-embedded bundle, fast, no API cost) —
+       built offline by `scripts/build_corpus.py`.
+    2. Live embedding of SEED_DOCS + EXTRA_SEED_DOCS + TIER1_SEED_DOCS (slow,
+       costs OpenAI API; only used when the bundle is missing — useful in
+       local dev or first run).
+    """
+    from app.ingest.embedded_corpus import load_pre_embedded_corpus
+    from app.ingest.legal_seed_extra import EXTRA_SEED_DOCS
+
     existing = await store.list_legal_documents()
     if existing:
         return {"docs": len(existing), "skipped": True}
 
+    # Path 1: pre-embedded bundle.
+    pre = await load_pre_embedded_corpus()
+    if pre.get("loaded"):
+        return pre
+
+    # Path 2: live-embed fallback. Dedupe by (short_citation + title) so the
+    # SEED_DOCS / EXTRA / TIER1 splits don't create duplicate doc rows.
+    try:
+        from app.ingest.legal_seed_tier1 import TIER1_SEED_DOCS
+    except Exception:
+        TIER1_SEED_DOCS = []
+    try:
+        from app.ingest.legal_seed_phase1 import PHASE1_SEED_DOCS
+    except Exception:
+        PHASE1_SEED_DOCS = []
+    try:
+        from app.ingest.legal_seed_constitution import CONSTITUTION_SEED
+        CONSTITUTION_DOCS = [CONSTITUTION_SEED]
+    except Exception:
+        CONSTITUTION_DOCS = []
+
+    deduped: dict[tuple[str, str], dict] = {}
+    for entry in (
+        SEED_DOCS + EXTRA_SEED_DOCS + TIER1_SEED_DOCS
+        + PHASE1_SEED_DOCS + CONSTITUTION_DOCS
+    ):
+        key = (entry["doc"].get("short_citation") or "", entry["doc"].get("title") or "")
+        if key in deduped:
+            deduped[key]["chunks"].extend(entry["chunks"])
+        else:
+            deduped[key] = {"doc": dict(entry["doc"]), "chunks": list(entry["chunks"])}
+
     counts = {"docs": 0, "chunks": 0}
-    for entry in SEED_DOCS:
+    for entry in deduped.values():
         doc = await store.insert_legal_document(**entry["doc"])
         chunk_texts = [c["text"] for c in entry["chunks"]]
         embeddings = await embed(chunk_texts)

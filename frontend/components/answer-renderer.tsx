@@ -65,13 +65,50 @@ function withPills(node: React.ReactNode, citations: Citation[]): React.ReactNod
   return node;
 }
 
+// Lookup table for common act-name variations the model emits inline.
+const ACT_ALIASES: Record<string, string> = {
+  "Bharatiya Nyaya Sanhita": "BNS",
+  "Bharatiya Nagarik Suraksha Sanhita": "BNSS",
+  "Bharatiya Sakshya Adhiniyam": "BSA",
+  "Indian Penal Code": "IPC",
+  "Code of Criminal Procedure": "CrPC",
+  "Indian Contract Act": "Contract Act",
+  "Transfer of Property Act": "TP Act",
+  "Negotiable Instruments Act": "NI Act",
+  "Consumer Protection Act, 2019": "CPA 2019",
+  "Consumer Protection Act": "CPA 2019",
+};
+
+function normaliseAct(s: string | null | undefined): string {
+  if (!s) return "";
+  const trimmed = s.trim();
+  for (const [long, short] of Object.entries(ACT_ALIASES)) {
+    if (trimmed.toLowerCase().includes(long.toLowerCase())) return short;
+  }
+  return trimmed;
+}
+
 function matchCitation(kind: string, body: string, citations: Citation[]): Citation | null {
   if (kind === "SECT") {
-    const [act, sec] = body.split(":");
-    return citations.find(c => c.type === "section" && c.act === act?.trim() && c.section === sec?.trim()) ?? null;
+    const parts = body.split(":");
+    const act = normaliseAct(parts[0]);
+    const sec = (parts[1] ?? "").trim();
+    return citations.find(c =>
+      c.type === "section" &&
+      normaliseAct(c.act ?? "") === act &&
+      (c.section ?? "").trim() === sec,
+    ) ?? null;
   }
   if (kind === "CASE") {
-    return citations.find(c => c.type === "case" && (c.citation_str === body || c.case_name === body)) ?? null;
+    const target = body.trim();
+    return citations.find(c =>
+      c.type === "case" && (
+        c.citation_str === target ||
+        c.case_name === target ||
+        (c.citation_str ?? "").includes(target) ||
+        (c.case_name ?? "").includes(target)
+      ),
+    ) ?? null;
   }
   if (kind === "COMPANY") {
     return { type: "company", raw: body, chunk_id: null } as any;

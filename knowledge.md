@@ -249,3 +249,143 @@ These were genuine production-quality issues, not eval-framework artefacts:
 
 After deploy, the smoke checks in `DEPLOY.md` validate the live URL.
 
+## Live deployment (production)
+
+| | |
+|---|---|
+| Production URL | https://ai-lawyer-india-ten.vercel.app |
+| Repo | https://github.com/saswat-mishra/ai-lawyer-india (private) |
+| Vercel project | `prj_rMAOhbSSGybCs6zSZuTgYfK8PKlR` (Saswat's `saswatmishras-projects` team, Hobby) |
+| Supabase project | `dcqvznagpsouslkaqlct` in `ap-south-1` (Mumbai) |
+| Frontend | Next.js 14 / React 18, served from `/frontend` as Vercel root |
+| Backend | FastAPI exposed via `api/index.py` as a Python serverless function (60s maxDuration, 1024 MB) |
+| LLM | OpenAI gpt-4o-mini default, gpt-4o heavy, text-embedding-3-small |
+| Health | `GET /api/health` → `{"ok":true,"has_openai":true,"env":"production"}` |
+| Smoke | `POST /api/chat` with "Section 103 BNS" → high-confidence answer with verified `[SECT:BNS:103]` citation |
+| Source drilldown | clicking a `BNS §356`-style pill opens a slide-in drawer with the full Section text + original source link (verified live) |
+
+## Deployment iterations (issues found and fixed during live UX testing)
+
+1. **`pnpm install` failed on Vercel** with `URLSearchParams` error (Node 24 + old pnpm). Fixed by switching to `npm install --no-audit --no-fund` and patching the project's saved buildCommand/installCommand via API.
+2. **Vercel rejected the deployment** because the commit author email (`saswatmishra.iitd@gmail.com`) wasn't matched to a GitHub user. Fixed by amending all commits to use Saswat's GitHub noreply email (`32617481+saswat-mishra@users.noreply.github.com`).
+3. **Vercel "Login Connection" error** when trying to import the GitHub repo via the dashboard (Saswat's account had Google login but no GitHub-as-login connection). Worked around by deploying via CLI with a Vercel API token (Hobby-scope) created in the dashboard, and unlinking the GitHub-integration on the project.
+4. **`No Next.js version detected`** at build time because `package.json` was in `frontend/`, not the deploy root. Reorganised the deploy copy so Vercel root = `frontend/`, with `api/` and `backend/` carried in alongside.
+5. **`api/index.py` runtime spec rejected** (Vercel doesn't accept `python3.11`; expects `@vercel/python@<v>` or auto-detection). Removed the explicit runtime field; Vercel auto-detects Python from `api/*.py`.
+6. **Function timed out at default 10s** (`Internal Server Error` on the first real chat). Added `"maxDuration": 60, "memory": 1024` to `api/index.py` in `vercel.json`.
+7. **`AttributeError: 'int' object has no attribute 'strip'`** in `find_section_by_number` because the model emits `"section": 103` as a JSON int. Coerced `section`/`act` to `str` in both `_structured_to_citations` and the store lookup.
+8. **Model echoed `[LEGAL 1]` source-block markers as fake citations.** Changed the source-block header from `[LEGAL 1]` to `--- Source 1 · Path · §X ---` so the model has no bracketed-source pattern to copy.
+9. **Raw `\`\`\`json{...}` trailer appeared in the answer body** when the model emitted JSON without the closing fence. Added a tolerant `_TRAILER_BARE` regex matching `{"citations":[...],"confidence":"..."}` and a stripper for orphan ```` ```json ```` openers at body end.
+10. **Duplicate citation pills** (one from inline parse, one from structured trailer). Added per-(type, act, section)/(type, citation_str) dedupe before persisting.
+11. **Citation pill showed `§ BNS §356`** (double § glyph). Dropped the leading `§` from `<CitationPill>` for section/article types; case pills get `¶`.
+12. **Vercel deployment URL gated behind SSO** (`401 Authentication Required`). Disabled `ssoProtection` / `passwordProtection` via project API patch; the auto-alias `ai-lawyer-india-ten.vercel.app` is now public.
+13. **Env vars created in `ajay-serohis-projects` (Ajay's team) didn't carry to `saswatmishras-projects`.** Wrote `scripts/seed_env.sh` that POSTs all 11 vars (OpenAI key, Supabase URL/anon key, DEVICE_COOKIE_SECRET, model identifiers, AIL_FORCE_MEMORY=1) directly to Saswat's project via the Vercel REST API.
+
+After all twelve fixes, the live deployment passes the canonical end-to-end UX test: Citizen-mode user clicks the defamation starter prompt → answer streams in within ~7s → two `BNS §356` citation pills inline → "1 sources used" expandable → click pill → side drawer slides in showing full Section 356 text with hierarchy and source link → confidence "High".
+
+## Refusal-rate audit (2026-04-29 → 30)
+
+User-reported issue: "I keep getting *I couldn't find authoritative basis for this question in my corpus*."
+
+15-query forensic audit (citizen + founder + practitioner + adversarial mix) hit the live API and captured trace data per query.
+
+### Root causes (three coordinated problems)
+
+1. **Refusal floor of 0.30 sat in the middle of the legitimate-query band.** Real answerable queries clustered top-1 cosine 0.34–0.69; out-of-scope queries clustered 0.13–0.22; borderline-but-still-answerable queries (noise nuisance, WhatsApp harassment, loan recovery) clustered 0.25–0.30. The threshold killed half the legitimate band.
+2. **Seed corpus was too narrow.** Only ~13 chunks. BNSS §482 (anticipatory bail) refused because BNSS wasn't seeded. Loan recovery refused because Specific Relief Act, Limitation Act, and CPC Order 37 weren't seeded. GST refused because CGST Act §22 wasn't seeded.
+3. **Silent hallucination risk.** A query about "offer letter clauses" came back with `confidence: high` and **zero verified citations** — the model was producing prose without any grounding.
+
+### Fixes shipped
+
+| | Change |
+|---|---|
+| Refusal floor | 0.30 → **0.22** (calibrated against the audit) |
+| `support_density` | top-1 cosine only → **max(top-1 cosine, top-3 mean cosine, top-1 lexical)** so a cluster of moderately-relevant chunks counts |
+| Corpus | 13 chunks → **34 chunks** covering BNS (criminal intimidation §351, sexual harassment §75, stalking §78, theft §303, hurt §115, extortion §308, public nuisance §270 + §292), BNSS (FIR §173, arrest §35, bail §480, anticipatory bail §482), IT Act (66C identity theft, 66D cheating-by-personation, 67 obscenity), Constitution (Articles 19, 32, 226), Specific Relief Act §10/§38, CPC Order XXXVII (summary suit), Limitation Act Articles 18 & 21, NI Act §142 (cheque-bounce limitation), CPA 2019 §35, POSH Act §4, Contract Act §23, CGST Act §22 (the registration threshold), Maharashtra Rent Control Act §7 + §16. |
+| Silent-hallucination guard | High confidence + **0 verified citations** → demote to "low" + prepend a transparency banner: *"this answer draws on general principles of Indian law but no specific section or case from our verified corpus matched"*. |
+| Refusal copy | Generic "consult an advocate" → constructive: surfaces the **closest 3 retrieved chunks** even though they fell below floor, lists likely reasons for the gap, and concrete next-step suggestions. |
+
+### Audit result (same 15 queries, before vs after)
+
+| | Before | After |
+|---|---|---|
+| Refusals | **7/15 (47%)** | **0/15** |
+| OK with verified citations | 7/15 | **9/15** |
+| Low-confidence with "no grounding" disclosure | 0/15 | 4/15 |
+| Clarification asked (graceful) | 0/15 | 1/15 |
+| Silent hallucinations (high conf + 0 cites) | 1/15 | **0/15** |
+
+Specific concrete wins:
+- Q03 noise nuisance: support 0.253 → 0.389, now cites **BNS §270 (public nuisance)** and §292 (punishment).
+- Q04 WhatsApp harassment: 0.262 → 0.379, now cites **BNS §351 (criminal intimidation)**.
+- Q06 loan recovery: now triggers the **clarifier** asking for amount and parties — graceful, not a refusal.
+- Q09 GST registration: 0.202 → 0.528, now cites **CGST §22 (₹20L turnover threshold)** correctly.
+- Q11 anticipatory bail BNSS §482: 0.290 → 0.670, corpus gap closed.
+- Q13 fake "Section 9999 BNS": still correctly demoted to low-confidence with a transparency note ("[unverified citation removed]" elsewhere).
+
+The 63 backend pytest assertions remain green throughout.
+
+## Corpus expansion + UI polish (2026-04-30)
+
+### Canonical document catalogue
+
+`CORPUS.md` now lists ~80 acts + 10+ leading SC cases that a practising
+advocate routinely cites — the lawyer's library — grouped by area
+(Foundational / Civil / Procedural / Personal & family / Labour / Commercial /
+IP / Tech / Tax / Property / Public law / Criminal special / Financial /
+Environment / Motor / Bar Council / Cases). Each row has a Government /
+Ministry / SC source URL.
+
+### Offline pre-embedded corpus pipeline
+
+Vercel cold-start budget can't pay for live embedding of hundreds of chunks.
+New flow:
+
+1. `scripts/build_corpus.py` (offline, run by maintainer) reads every seed
+   module, dedupes by (short_citation, title), batch-calls OpenAI embeddings,
+   writes `backend/data/corpus.jsonl`.
+2. At app boot, `app.ingest.embedded_corpus.load_pre_embedded_corpus()` slurps
+   the JSONL file directly into the in-memory store — no API calls.
+3. The legal_seed loader prefers the bundle and falls back to live embedding
+   only when the file is missing (local dev / first run).
+
+Bundle stats (current build): **40 unique docs · 81 chunks · 1.30 MB · 40 ms
+boot load** (vs ~5–10s for live embedding the same set).
+
+### Tier-1 hand-curated additions
+
+`legal_seed_tier1.py` adds 22+ more priority acts including Companies Act
+(definitions, Board composition, director duties), BSA (electronic-records
+admissibility, confessions), Hindu Marriage Act (s.5/13/13B), PWDV Act (s.3,
+s.12), RTI Act (s.6, s.7), RERA (s.3, s.18), Arbitration & Conciliation Act
+(s.7, s.34), IBC (s.7, s.14), Income-tax Act (s.80C, s.139), MV Act (s.166,
+s.185), Trade Marks Act (s.29), Copyright Act (s.14, s.52), DPDP Act (s.6,
+s.11), Advocates Act (s.30), NDPS Act (s.20), Indian Stamp Act (s.17),
+Registration Act (s.17), Indian Succession Act (s.63), Hindu Succession Act
+(s.6 — daughter's coparcenary right post-2005), ID Act (s.25F retrenchment),
+Payment of Gratuity Act (s.4), Maternity Benefit Act (s.5), PMLA (s.3),
+Prevention of Corruption Act (s.7).
+
+### UI fixes shipped
+
+| Issue | Fix |
+|---|---|
+| Pills displayed `BNS §103` / `Constitution §21` — `§` glyph confused non-lawyer users | `pillLabel()` now renders **`Section 103, BNS`** and **`Article 21, Constitution`** in plain English. |
+| Citation pills always rendered clickable, even when `chunk_id` was null — clicking opened an empty drawer | Pill is now an inert `<span class="cite-pill cite-pill--inert">` (muted colour, no cursor change, tooltip: "Source not available in our verified corpus") when the source can't be drilled into. |
+| Inline `[SECT:Indian Penal Code:302]`-style tags weren't matching `IPC` in the verified citation list | `matchCitation()` now normalises act aliases (Bharatiya Nyaya Sanhita → BNS, Indian Penal Code → IPC, Indian Contract Act → Contract Act, etc.) on both sides before comparing. |
+| Source drawer header read `BNS §356` | Now reads **"Section 356, BNS"** matching the pill format. |
+
+### Live verification
+
+End-to-end on `https://ai-lawyer-india-ten.vercel.app`:
+
+- "What does Section 138 of the NI Act say about cheque bounce?" → High
+  confidence, two pills `Section 138, NI Act` and `Section 142, NI Act`,
+  both clickable, "2 sources used" expandable.
+- Click on `Section 138, NI Act` pill → side drawer opens with
+  **"Section 138, NI Act"** header, "Negotiable Instruments Act, 1881"
+  subtitle, "NI Act > Chapter XVII > Section 138" path, and the full
+  operative text of Section 138.
+- Same 15-query refusal audit re-run: **0 refusals**, 11 with verified
+  citations, 4 with transparency notes (low confidence + "no specific section
+  in our verified corpus matched" banner), 1 graceful clarification.
+

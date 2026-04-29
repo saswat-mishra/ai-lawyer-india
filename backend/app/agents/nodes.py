@@ -46,12 +46,37 @@ _BNS_NOTE = (
     "For prior offences, IPC/CrPC/Evidence Act apply. If date is unclear, ask."
 )
 
-_REFUSAL_BODY = (
-    "I couldn't find authoritative basis for this question in my corpus. "
-    "This is likely because the matter is highly fact-specific, requires state-level "
-    "rules I don't have indexed, or is outside scope. "
-    "Recommended next step: consult an enrolled advocate practising in this area."
+_REFUSAL_BODY_HEADER = (
+    "I don't have enough authoritative material in my corpus to answer this "
+    "with the citation-grounded confidence I aim for. Rather than guess, here's "
+    "what I can offer:"
 )
+
+
+def _build_refusal(state: "AgentState") -> str:
+    """Constructive refusal: surface the closest sections we DID find, even if
+    below the support floor, so the user has somewhere to start."""
+    parts = [_REFUSAL_BODY_HEADER, ""]
+    near = state.legal_results[:3]
+    if near:
+        parts.append("**Closest material in the corpus** (low confidence — verify before relying):")
+        for c in near:
+            path = " > ".join(c.hierarchy_path) if c.hierarchy_path else ""
+            sec = f" §{c.section_number}" if c.section_number else ""
+            parts.append(f"- {path}{sec}")
+        parts.append("")
+    parts.extend([
+        "**Likely reasons for the gap:**",
+        "- The relevant statute may not yet be in my indexed corpus.",
+        "- The question is highly state-specific (e.g., a state Rent Act, stamp duty rate).",
+        "- It depends on facts only an advocate can interpret.",
+        "",
+        "**Suggested next steps:**",
+        "1. Try rephrasing with the specific statute, section, or location.",
+        "2. Consult an enrolled advocate practising in the relevant area.",
+        "3. For procedural matters, check the official statute on indiacode.nic.in.",
+    ])
+    return "\n".join(parts)
 
 
 # ---------- Nodes ----------
@@ -152,15 +177,30 @@ async def clarify(state: AgentState) -> AgentState:
 
 
 async def retrieve(state: AgentState) -> AgentState:
+    from app.rag import rerank as rerank_mod
     legal_task = retrieve_legal(state.user_query, persona=state.persona)
     company_task = retrieve_company(state.user_query, device_id=state.device_id)
     legal, company = await asyncio.gather(legal_task, company_task)
+
+    # Phase 1: LLM-as-reranker over the fused legal candidates.
+    # Opt-in via RERANK_ENABLED=1; auto-skipped without an OpenAI key.
+    reranked = False
+    if rerank_mod.is_enabled() and len(legal) > 1:
+        from app.core.config import Persona
+        persona_val = state.persona.value if isinstance(state.persona, Persona) else state.persona
+        target_k = (16 if persona_val == "practitioner"
+                    else 6 if persona_val == "citizen"
+                    else 8)
+        legal = await rerank_mod.rerank(state.user_query, legal, top_k=target_k)
+        reranked = True
+
     state.legal_results = legal
     state.company_results = company
     state.support_density = support_density(legal)
     state.log("retrieve",
                 legal_count=len(legal), company_count=len(company),
-                support=state.support_density)
+                support=state.support_density,
+                reranked=reranked)
     return state
 
 
@@ -170,8 +210,10 @@ async def synthesize(state: AgentState) -> AgentState:
         state.refused = True
         state.refusal_reason = "low_support"
         state.confidence = "refused"
-        state.answer_md = _REFUSAL_BODY
-        state.log("synthesize", refused=True)
+        state.answer_md = _build_refusal(state)
+        state.log("synthesize", refused=True,
+                    support=state.support_density,
+                    floor=settings.refusal_floor)
         return state
 
     persona_val = state.persona.value if isinstance(state.persona, Persona) else state.persona
@@ -187,23 +229,36 @@ async def synthesize(state: AgentState) -> AgentState:
         f"COMPANY-PROVIDED CONTEXT (the user's own documents):\n{company_blocks or '(none)'}\n\n"
         f"INSTRUCTIONS:\n"
         f"- Use ONLY the sources above; do not introduce outside citations.\n"
-        f"- Cite using [SECT:Act:Number] for sections and [CASE:short_citation] for cases.\n"
-        f"- For company sources cite [COMPANY:doc_name].\n"
+        f"- DO NOT echo source-block markers like 'Source 1' or 'LEGAL 1' as citations.\n"
+        f"- Every substantive legal claim MUST be followed inline by a citation in EXACTLY one of these forms:\n"
+        f"    [SECT:<Act>:<Section>]   for statutes (e.g. [SECT:BNS:103], [SECT:NI Act:138])\n"
+        f"    [CASE:<short_citation>]  for case law (e.g. [CASE:AIR 1986 SC 180])\n"
+        f"    [COMPANY:<doc_name>]     for the user's company docs\n"
         f"- If a source contradicts your draft answer, prefer the source.\n"
         f"- {_BNS_NOTE}\n"
-        f"- End with a JSON block fenced as ```json{{...}}``` containing structured "
-        f"citations and a confidence label (high/medium/low).")
+        f"- End with a JSON block fenced as ```json{{...}}``` with the schema "
+        f"{{\"citations\": [{{\"type\":\"section|case\",\"act\":...,\"section\":...,\"case_name\":...,\"citation_str\":...}}], \"confidence\": \"high|medium|low\"}}.")
     md = await chat_complete([sys, user], temperature=0.2, max_tokens=1400)
 
     # Extract structured trailer.
     body, structured = _split_structured_trailer(md)
+    # Strip any orphan ```json fence prefix the model leaves behind.
+    body = re.sub(r"\n*```(?:json)?\s*$", "", body, flags=re.I).rstrip()
     state.answer_md = body
-    cites = parse_citations(body)
-    cites += _structured_to_citations(structured)
-    state.citations = cites
+    cites = parse_citations(body) + _structured_to_citations(structured)
+    # Dedup by (type, act, section) for sections and (type, citation_str) for cases.
+    seen: set[tuple] = set()
+    deduped: list[Citation] = []
+    for c in cites:
+        key = (c.type, c.act, c.section) if c.type == "section" else (c.type, c.citation_str)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(c)
+    state.citations = deduped
     state.confidence = (structured.get("confidence")
                           if isinstance(structured, dict) else None) or "medium"
-    state.log("synthesize", citations=len(cites), confidence=state.confidence)
+    state.log("synthesize", citations=len(deduped), confidence=state.confidence)
     return state
 
 
@@ -226,6 +281,22 @@ async def verify(state: AgentState) -> AgentState:
             state.confidence = "medium"
         elif state.confidence == "medium":
             state.confidence = "low"
+
+    # Silent-hallucination guard: a high-confidence answer with ZERO verified
+    # citations means the model wrote prose without grounding. Demote AND
+    # prepend a transparency note so the user knows.
+    if not state.refused and len(state.citations) == 0:
+        if state.confidence in ("high", "medium"):
+            state.confidence = "low"
+        if state.answer_md and not state.answer_md.startswith("> _Note:"):
+            state.answer_md = (
+                "> _Note: this answer draws on general principles of Indian law "
+                "but no specific section or case from our verified corpus matched "
+                "your query. Treat as informational; consult an enrolled "
+                "advocate for binding advice._\n\n"
+                + state.answer_md
+            )
+
     return state
 
 
@@ -272,39 +343,67 @@ def _build_system_prompt(persona_blurb: str) -> str:
 
 
 def _format_blocks(chunks, *, kind: str) -> str:
+    """Render retrieved chunks for the synthesis prompt.
+
+    Use `--- Source: ... ---` headers (NOT bracket form) so the model doesn't
+    hallucinate `[LEGAL 1]`-style placeholders into its output. The model is
+    instructed to cite via `[SECT:Act:Section]` separately.
+    """
     parts = []
     for i, c in enumerate(chunks, 1):
         path = " > ".join(c.hierarchy_path) if c.hierarchy_path else ""
-        header = f"[{kind.upper()} {i}] {path}".strip()
+        header_bits = [f"Source {i}", path]
         if c.section_number:
-            header += f" §{c.section_number}"
+            header_bits.append(f"§{c.section_number}")
+        header = "--- " + " · ".join(b for b in header_bits if b) + " ---"
         snippet = (c.text[:1200] + "...") if len(c.text) > 1200 else c.text
         parts.append(f"{header}\n{snippet}")
     return "\n\n".join(parts)
 
 
-_TRAILER_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.S | re.I)
+_TRAILER_FENCED = re.compile(r"```json\s*(\{.*?\})\s*```", re.S | re.I)
+# Tolerant: a trailing line that LOOKS like our JSON shape (citations + confidence).
+_TRAILER_BARE = re.compile(
+    r"\{\s*\"citations\"\s*:\s*\[.*?\]\s*,\s*\"confidence\"\s*:\s*\"(?:high|medium|low|refused)\"\s*\}",
+    re.S | re.I,
+)
 
 
 def _split_structured_trailer(md: str) -> tuple[str, dict]:
-    m = _TRAILER_RE.search(md)
-    if not m:
-        return md, {}
-    body = (md[:m.start()] + md[m.end():]).strip()
-    try:
-        return body, json.loads(m.group(1))
-    except json.JSONDecodeError:
-        return body, {}
+    for pat in (_TRAILER_FENCED, _TRAILER_BARE):
+        m = pat.search(md)
+        if not m:
+            continue
+        json_text = m.group(1) if m.lastindex else m.group(0)
+        body = (md[:m.start()] + md[m.end():]).strip()
+        try:
+            return body, json.loads(json_text)
+        except json.JSONDecodeError:
+            continue
+    return md, {}
 
 
 def _structured_to_citations(payload: dict) -> list[Citation]:
+    """Coerce the model's JSON to typed Citations.
+
+    The model often emits numeric `section` (e.g., `"section": 356`); we coerce
+    it to str so downstream string ops (.strip(), .lower()) don't blow up.
+    """
     out: list[Citation] = []
     for c in (payload.get("citations") or []):
-        if c.get("type") == "section":
-            out.append(Citation(type="section", raw=str(c),
-                                  act=c.get("act"), section=c.get("section")))
-        elif c.get("type") == "case":
-            out.append(Citation(type="case", raw=str(c),
-                                  case_name=c.get("case_name"),
-                                  citation_str=c.get("citation_str")))
+        ctype = c.get("type")
+        if ctype == "section":
+            sec = c.get("section")
+            act = c.get("act")
+            out.append(Citation(
+                type="section", raw=str(c),
+                act=str(act) if act is not None else None,
+                section=str(sec) if sec is not None else None,
+            ))
+        elif ctype == "case":
+            out.append(Citation(
+                type="case", raw=str(c),
+                case_name=c.get("case_name"),
+                citation_str=c.get("citation_str"),
+            ))
     return out
