@@ -1,0 +1,13 @@
+{"id": "rr-001", "query": "punishment for murder", "expect_section": "103", "expect_act": "BNS"}
+{"id": "rr-002", "query": "cheating and dishonest inducement delivery property", "expect_section": "318", "expect_act": "BNS"}
+{"id": "rr-003", "query": "defamation publication imputation reputation", "expect_section": "356", "expect_act": "BNS"}
+{"id": "rr-004", "query": "section 302 IPC murder", "expect_section": "302", "expect_act": "IPC"}
+{"id": "rr-005", "query": "section 420 IPC cheating delivery property", "expect_section": "420", "expect_act": "IPC"}
+{"id": "rr-006", "query": "cheque dishonour insufficient funds banker", "expect_section": "138", "expect_act": "NI Act"}
+{"id": "rr-007", "query": "compensation for loss damage breach contract", "expect_section": "73", "expect_act": "Contract Act"}
+{"id": "rr-008", "query": "agreement in restraint of trade void", "expect_section": "27", "expect_act": "Contract Act"}
+{"id": "rr-009", "query": "lease month to month notice fifteen days", "expect_section": "106", "expect_act": "TP Act"}
+{"id": "rr-010", "query": "right to life personal liberty procedure established by law", "expect_section": "21", "expect_act": "Constitution"}
+{"id": "rr-011", "query": "equality before law protection of laws", "expect_section": "14", "expect_act": "Constitution"}
+{"id": "rr-012", "query": "deficiency in service unfair trade practice consumer", "expect_section": "2(11)", "expect_act": "CPA 2019"}
+{"id": "rr-013", "query": "right to livelihood pavement dwellers eviction", "expect_chunk_type": "held"}

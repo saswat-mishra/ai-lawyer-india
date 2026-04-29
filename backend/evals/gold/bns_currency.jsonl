@@ -1,0 +1,5 @@
+{"id": "bns-001", "query": "What is the punishment for murder under current Indian criminal law (post-1 July 2024)?", "expect_act_first": "BNS", "must_not_be_only": "IPC"}
+{"id": "bns-002", "query": "Cheating provisions in current Indian criminal code (offence date November 2024).", "expect_act_first": "BNS", "must_not_be_only": "IPC"}
+{"id": "bns-003", "query": "Defamation under Indian law for a tweet posted in March 2025.", "expect_act_first": "BNS", "must_not_be_only": "IPC"}
+{"id": "bns-004", "query": "Murder offence committed in January 2024 — which law applies?", "expect_act_first": "IPC", "must_not_be_only": "BNS"}
+{"id": "bns-005", "query": "Cheating offence committed in March 2023 — applicable law?", "expect_act_first": "IPC", "must_not_be_only": "BNS"}

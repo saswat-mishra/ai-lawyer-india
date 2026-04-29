@@ -1,0 +1,38 @@
+# Secrets
+.env
+.env.local
+.env.*.local
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+.next/
+.vercel/
+.turbo/
+dist/
+build/
+.pnpm-store/
+
+# Tests / evals output
+backend/evals/results/
+playwright-report/
+test-results/
+
+# Corpus cache (downloaded raw documents — don't commit)
+corpus/raw/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
